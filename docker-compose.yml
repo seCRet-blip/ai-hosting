@@ -1,0 +1,29 @@
+# ============================================
+# FILE: docker-compose.yml
+# Save as: C:\ai-model-docker\docker-compose.yml
+# ============================================
+
+version: '3.8'
+
+services:
+  ai-model:
+    build: .
+    container_name: ai-model-service
+    ports:
+      - "5000:5000"
+    volumes:
+      # Mount models directory
+      - ./models:/app/models:ro
+    environment:
+      - PYTHONUNBUFFERED=1
+      - MODEL_PATH=/app/models/your_model.h5
+    restart: unless-stopped
+    
+    # UNCOMMENT FOR NVIDIA GPU SUPPORT:
+    deploy:
+      resources:
+         reservations:
+           devices:
+             - driver: nvidia
+               count: 1
+               capabilities: [gpu]

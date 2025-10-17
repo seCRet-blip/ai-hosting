@@ -1,0 +1,21 @@
+
+# ============================================
+# FILE: requirements.txt
+# Save as: C:\ai-model-docker\requirements.txt
+# ============================================
+
+flask==3.0.0
+flask-cors==4.0.0
+pillow==10.1.0
+numpy==1.26.2
+
+
+
+# For PyTorch (CPU):
+torch==2.1.0
+torchvision==0.16.0
+
+# For PyTorch (GPU - NVIDIA):
+torch==2.1.0+cu118
+torchvision==0.16.0+cu118
+# --extra-index-url https://download.pytorch.org/whl/cu118
