@@ -1,0 +1,9 @@
+version: "2"
+
+tunnels:
+  ai-api:
+    proto: http
+    addr: ai-proxy:80
+    schemes:
+      - https
+    inspect: true
