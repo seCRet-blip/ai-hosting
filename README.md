@@ -2,7 +2,7 @@
 
 A production-ready, containerized AI image classification API with comprehensive security features, built with Flask, Docker, and ngrok.
 
-## 🚀 Features
+##  Features
 
 - **AI Image Classification** - EfficientNet-based model for binary image classification
 - **ONNX Runtime** - Optimized inference with ONNX
@@ -13,7 +13,7 @@ A production-ready, containerized AI image classification API with comprehensive
 - **Auto-restart** - Services automatically restart on failure
 - **CORS Enabled** - Ready for web application integration
 
-## 📋 Prerequisites
+##  Prerequisites
 
 - Docker Desktop (Windows/Mac) or Docker Engine (Linux)
 - Docker Compose
@@ -21,7 +21,7 @@ A production-ready, containerized AI image classification API with comprehensive
 - Python 3.10+ (for local development)
 - Node.js (for testing)
 
-## 🏗️ Architecture
+##  Architecture
 
 ```
 User → ngrok Tunnel → nginx Proxy → Flask API → ONNX Model
@@ -35,7 +35,7 @@ User → ngrok Tunnel → nginx Proxy → Flask API → ONNX Model
 3. **ngrok Tunnel** - Secure public access without exposing your IP
 4. **ONNX Model** - Optimized AI inference engine
 
-## 📁 Project Structure
+##  Project Structure
 
 ```
 ai-hosting/
@@ -57,7 +57,7 @@ ai-hosting/
     └── All_nz_regions_model.pth   # PyTorch model file
 ```
 
-## 🔧 Setup
+##  Setup
 
 ### 1. Clone Repository
 
@@ -120,7 +120,7 @@ Look for output like:
 started tunnel    url=https://abc123.ngrok-free.app
 ```
 
-## 🧪 Testing
+##  Testing
 
 ### Health Check
 
@@ -165,7 +165,7 @@ npm install
 node test.js
 ```
 
-## 🔒 Security Features
+##  Security Features
 
 ### 1. API Key Authentication
 - All `/predict` requests require `X-API-Key` header
@@ -201,7 +201,7 @@ node test.js
 - Timeout configurations
 - ngrok's built-in DDoS protection
 
-## 🌐 API Endpoints
+##  API Endpoints
 
 ### GET `/`
 Returns API information and available endpoints.
@@ -255,16 +255,16 @@ Image classification endpoint.
 - `429`: Rate limit exceeded
 - `500`: Internal server error
 
-## 🔄 Usage in Web Applications
+##  Usage in Web Applications
 
-### ⚠️ Important Security Note
+###  Important Security Note
 
 **Never expose your API key in frontend JavaScript!** The key will be visible in:
 - Browser DevTools
 - Page source
 - Network requests
 
-### ✅ Secure Implementation
+###  Secure Implementation
 
 Create a backend proxy to hide your API key:
 
@@ -312,7 +312,7 @@ async function predictImage(imageFile) {
 }
 ```
 
-## 🛠️ Management Commands
+##  Management Commands
 
 ```bash
 # Start services
@@ -342,7 +342,7 @@ docker-compose ps
 # Open http://localhost:4040 in browser
 ```
 
-## 📊 Monitoring
+##  Monitoring
 
 ### ngrok Dashboard
 Access at http://localhost:4040 to view:
@@ -363,7 +363,7 @@ docker-compose logs | grep -i error
 docker-compose logs --tail 100
 ```
 
-## 🐛 Troubleshooting
+##  Troubleshooting
 
 ### ngrok authentication failed
 **Issue:** ngrok container shows authentication error
@@ -411,7 +411,7 @@ docker-compose logs [service-name]
 # - Port conflicts
 ```
 
-## 🔄 Updating the Model
+##  Updating the Model
 
 1. Export new ONNX model:
 ```bash
@@ -424,7 +424,7 @@ docker-compose down
 docker-compose up -d --build
 ```
 
-## 📈 Scaling
+##  Scaling
 
 ### Increase Rate Limits
 
@@ -454,7 +454,7 @@ Upgrade to ngrok paid plan ($8/month) for:
 - Reserved domain
 - No connection limits
 
-## 🔐 Production Deployment
+##  Production Deployment
 
 ### Best Practices
 
@@ -475,7 +475,7 @@ For production, consider deploying to:
 - **Azure Container Instances** - Simple container hosting
 - **Railway/Render** - Easy deployment platforms
 
-## 📝 Model Details
+##  Model Details
 
 - **Architecture**: EfficientNet-B3
 - **Input Size**: 128x128 RGB images
@@ -485,7 +485,7 @@ For production, consider deploying to:
   - Resize to 128x128
   - Normalize: mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
 
-## 🤝 Contributing
+##  Contributing
 
 1. Fork the repository
 2. Create a feature branch
@@ -493,18 +493,18 @@ For production, consider deploying to:
 4. Test thoroughly
 5. Submit a pull request
 
-## 📄 License
+##  License
 
 This project is private. All rights reserved.
 
-## 🆘 Support
+##  Support
 
 For issues or questions:
 1. Check the Troubleshooting section
 2. Review container logs: `docker-compose logs`
 3. Open an issue on GitHub
 
-## 🙏 Acknowledgments
+##  Acknowledgments
 
 - Flask - Web framework
 - ONNX Runtime - Optimized inference
@@ -513,5 +513,3 @@ For issues or questions:
 - Docker - Containerization
 
 ---
-
-**Made with ❤️ for secure, scalable AI model deployment**
