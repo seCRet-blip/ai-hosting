@@ -22,4 +22,3 @@ torchvision==0.16.0
 #torchvision==0.16.0+cu118
 # --extra-index-url https://download.pytorch.org/whl/cu118
 
-172.25.224.1
