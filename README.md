@@ -1,282 +1,229 @@
-# AI Model Hosting API
+# NZ Aerial Imagery Classification API
 
-A production-ready, containerized AI image classification API with comprehensive security features, built with Flask, Docker, and ngrok.
+A production-style inference service that classifies New Zealand aerial imagery with a custom EfficientNet-B3 model, served over HTTPS through a hardened Docker stack.
 
-##  Features
+Upload a tile. Get a prediction, class probabilities, and a confidence score. The model never talks to the internet directly — nginx, hashed API keys, and dual-layer rate limits sit in front of it.
 
-- **AI Image Classification** - EfficientNet-based model for binary image classification
-- **ONNX Runtime** - Optimized inference with ONNX
-- **Containerized** - Fully Dockerized with docker-compose
-- **Secure** - API key authentication, rate limiting, input validation
-- **Public Access** - ngrok tunnel for secure public access without exposing your IP
-- **Reverse Proxy** - nginx for load balancing and additional security
-- **Auto-restart** - Services automatically restart on failure
-- **CORS Enabled** - Ready for web application integration
+```
+Client  ──HTTPS──►  ngrok  ──►  nginx  ──►  Flask  ──►  ONNX Runtime
+                    tunnel      proxy       API         EfficientNet-B3
+```
 
-##  Prerequisites
+Built to show how I take a trained model off a notebook and run it like a real product: containerized, authenticated, rate-limited, and reachable without exposing a home IP.
 
-- Docker Desktop (Windows/Mac) or Docker Engine (Linux)
+---
+
+## Why this exists
+
+Training a model is the easy half. Hosting one is where most student projects stop.
+
+This repo is the other half — a small production pipeline for a binary classifier trained on NZ regional aerial tiles (the sample in-repo is an Auckland zoom-15 tile). PyTorch weights are exported to ONNX so inference stays fast on CPU, then the model is wrapped in a public API with the controls you would expect before handing it to another app.
+
+| Layer | What it does |
+| --- | --- |
+| **Model** | EfficientNet-B3 with a custom classification head, ImageNet-initialized, exported to ONNX opset 18 |
+| **Inference** | ONNX Runtime on 128×128 RGB tiles, ImageNet normalization, softmax probabilities |
+| **API** | Flask endpoints for health and authenticated prediction, hashed API-key comparison |
+| **Edge** | nginx reverse proxy, CORS allowlist, security headers, upload and connection limits |
+| **Access** | ngrok HTTPS tunnel so the stack can be demoed without opening inbound ports |
+| **Ops** | Docker Compose, healthchecks, `unless-stopped` restarts, structured error logging |
+
+---
+
+## Design choices
+
+**End-to-end ML serving, not a Flask demo.** Weights live in `models/`. `export_model.py` converts a `.pth` checkpoint to ONNX. `server.py` loads the improved ONNX graph once at startup and never reloads it per request.
+
+**Defense in depth, not a single if-statement.** `/predict` requires `X-API-Key`. The key is hashed with SHA-256 at boot and compared as a hash. nginx and Flask-Limiter both throttle traffic. Uploads are checked for type, size (10 MB), dimensions (max 4096×4096), and actual image integrity before they reach the model.
+
+**The public internet never hits Flask first.** Request path is ngrok → nginx → API. nginx adds `X-Frame-Options`, `nosniff`, XSS, and referrer headers, caps body size, and applies tighter limits on `/predict` than on `/health`.
+
+**Secrets stay out of the image.** API key and ngrok token come from `.env`. There is no hardcoded fallback key in Compose. `.env` is gitignored; `.env.example` is the only template committed.
+
+---
+
+## Architecture
+
+```
+  HTTPS                 :80                    :5001
+Client -------> ngrok -------> nginx -------> Flask API
+                tunnel         proxy          ONNX Runtime
+                               CORS           EfficientNet-B3
+                               rate limits
+                               security headers
+```
+
+**Three containers, one command.**
+
+1. `ai-model-api` — Python 3.10 slim image, model baked in, `/health` used by Docker healthchecks
+2. `ai-proxy` — nginx Alpine, config mounted read-only
+3. `ngrok-tunnel` — HTTPS in front of nginx, inspector on `localhost:4040`
+
+---
+
+## Model
+
+| | |
+| --- | --- |
+| Architecture | EfficientNet-B3 + dropout / Linear / ReLU / BatchNorm head |
+| Task | Binary classification on NZ regional aerial tiles |
+| Input | 128×128 RGB, mean `[0.485, 0.456, 0.406]`, std `[0.229, 0.224, 0.225]` |
+| Output | `{ prediction, probabilities, confidence }` |
+| Train → serve | PyTorch `.pth` → `export_model.py` → ONNX → ONNX Runtime |
+
+Served weights: `models/improved_All_nz_regions_model.onnx`
+
+---
+
+## Security (the short version)
+
+- **Auth:** `X-API-Key` on `/predict`; SHA-256 compare; `/health` stays open for probes
+- **Rate limits:** nginx `1r/m` on general routes (burst 20) and `10r/m` on `/predict` (burst 5); Flask-Limiter caps predict at 30/hour
+- **Connections:** 10 concurrent per IP generally, 5 on `/predict`
+- **Uploads:** png / jpg / jpeg / gif / bmp / webp only, 10 MB max, 4096² max, `Image.verify()`
+- **Headers:** `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `X-XSS-Protection`, `Referrer-Policy`
+- **Errors:** clients get generic messages; logs record exception type only
+
+Never put the API key in frontend JavaScript. Call this service from your own backend.
+
+---
+
+## API
+
+### `GET /health`
+
+No key. Used by Docker and load balancers.
+
+```json
+{ "status": "healthy", "model_loaded": true }
+```
+
+### `POST /predict`
+
+Headers: `X-API-Key`, `Content-Type: multipart/form-data`  
+Body: `file` — image, max 10 MB
+
+```json
+{
+  "prediction": 0,
+  "probabilities": [0.8234, 0.1766],
+  "confidence": 0.8234
+}
+```
+
+| Status | Meaning |
+| --- | --- |
+| 401 | Missing or wrong API key |
+| 400 | Bad / empty / non-image file |
+| 413 | Over 10 MB |
+| 429 | Rate limit |
+| 500 | Model missing or inference failed |
+
+### `GET /`
+
+Service info and endpoint list.
+
+---
+
+# Setup
+
+## Prerequisites
+
+- Docker Desktop (Windows / Mac) or Docker Engine (Linux)
 - Docker Compose
-- ngrok account (free tier available at https://ngrok.com)
-- Python 3.10+ (for local development)
-- Node.js (for testing)
+- An [ngrok](https://ngrok.com) account (free tier is enough)
+- Python 3.10+ if you are exporting models locally
+- Node.js if you want to run `test.js`
 
-##  Architecture
-
-```
-User → ngrok Tunnel → nginx Proxy → Flask API → ONNX Model
-        (HTTPS)        (Port 80)    (Port 5001)  (128x128 images)
-```
-
-### Components:
-
-1. **Flask API Server** (`server.py`) - Main application with API endpoints
-2. **nginx Reverse Proxy** - Load balancing, rate limiting, security headers
-3. **ngrok Tunnel** - Secure public access without exposing your IP
-4. **ONNX Model** - Optimized AI inference engine
-
-##  Project Structure
-
-```
-ai-hosting/
-├── server.py              # Flask API server
-├── model_arc.py          # AI model architecture and ONNX inference
-├── onnx_inference.py     # ONNX inference utilities
-├── export_model.py       # Model export script
-├── Dockerfile            # Container image definition
-├── docker-compose.yml    # Multi-container orchestration
-├── nginx.conf            # nginx reverse proxy configuration
-├── ngrok.yml             # ngrok tunnel configuration
-├── requirements.txt      # Python dependencies
-├── .env                  # Environment variables (create from .env.example)
-├── .env.example          # Environment variables template
-├── package.json          # Node.js dependencies for testing
-├── test.js               # API testing script
-└── models/
-    ├── All_nz_regions_model.onnx  # ONNX model file
-    └── All_nz_regions_model.pth   # PyTorch model file
-```
-
-##  Setup
-
-### 1. Clone Repository
+## 1. Clone
 
 ```bash
 git clone https://github.com/seCRet-blip/ai-hosting.git
 cd ai-hosting
 ```
 
-### 2. Configure Environment Variables
+## 2. Environment
 
 ```bash
-# Copy example environment file
 cp .env.example .env
 ```
 
-Edit `.env` and add your credentials:
+Edit `.env`:
 
 ```env
-# Generate a secure API key
-API_KEY=your-secure-api-key-here
-
-# Get your ngrok auth token from https://dashboard.ngrok.com
+AI_API_KEY=your-secure-api-key-here
 NGROK_AUTHTOKEN=your-ngrok-token-here
+AI_API_URL=http://localhost
 ```
 
-**Generate secure API key:**
+Get the ngrok token from [the ngrok dashboard](https://dashboard.ngrok.com/get-started/your-authtoken). Generate an API key:
+
 ```bash
-# Using Python
+# Python
 python -c "import secrets; print(secrets.token_urlsafe(32))"
 
-# Using PowerShell
+# PowerShell
 [System.Convert]::ToBase64String([System.Security.Cryptography.RandomNumberGenerator]::GetBytes(32))
 ```
 
-### 3. Build and Start Services
+## 3. Start the stack
 
 ```bash
-# Build and start all containers
 docker-compose up -d --build
-
-# Check container status
 docker-compose ps
-
-# View logs
 docker-compose logs -f
 ```
 
-### 4. Get Your Public URL
+## 4. Public URL
 
 ```bash
-# View ngrok logs to get your public URL
 docker-compose logs ngrok
-
-# Or visit the ngrok web interface
-# http://localhost:4040
+# or open http://localhost:4040
 ```
 
-Look for output like:
-```
-started tunnel    url=https://abc123.ngrok-free.app
-```
+You want a line like `url=https://abc123.ngrok-free.app`. Put that in `.env` as `AI_API_URL` if you are calling the public tunnel from `test.js`.
 
-##  Testing
+---
 
-### Health Check
+## Try it
+
+Health (no key):
 
 ```bash
 curl https://your-ngrok-url.ngrok-free.app/health
 ```
 
-Expected response:
-```json
-{
-  "status": "healthy",
-  "model_loaded": true
-}
-```
-
-### Prediction Test
+Prediction:
 
 ```bash
 curl -X POST \
-  -F "file=@your-image.jpg" \
+  -F "file=@auckland_15_32258_19983.jpg" \
   -H "X-API-Key: your-api-key-here" \
   https://your-ngrok-url.ngrok-free.app/predict
 ```
 
-Expected response:
-```json
-{
-  "prediction": 0,
-  "probabilities": [0.8234, 0.1766],
-  "confidence": 0.8234
-}
-```
-
-### Using Test Script
+Or the Node script:
 
 ```bash
-# Install Node.js dependencies
 npm install
-
-# Update test.js with your ngrok URL and API key
-# Then run:
+# AI_API_KEY and AI_API_URL must be set in .env
 node test.js
 ```
 
-##  Security Features
+---
 
-### 1. API Key Authentication
-- All `/predict` requests require `X-API-Key` header
-- Health checks remain open for monitoring
+## Using it from a web app
 
-### 2. Rate Limiting
-- **General API**: 20 requests/minute per IP
-- **Predictions**: 5 requests/minute per IP (stricter)
-- **Health checks**: 30 requests/minute
-- Burst allowance for traffic spikes
-
-### 3. Connection Limits
-- Max 10 concurrent connections per IP (general)
-- Max 5 concurrent connections for predictions
-
-### 4. Input Validation
-- **File type check**: Only images (png, jpg, jpeg, gif, bmp, webp)
-- **File size limit**: 10MB maximum
-- **Image dimension check**: 4096x4096 maximum
-- **Image verification**: Validates image format and integrity
-- **Empty file detection**
-
-### 5. Security Headers
-- `X-Frame-Options: DENY` - Prevents clickjacking
-- `X-Content-Type-Options: nosniff` - Prevents MIME sniffing
-- `X-XSS-Protection` - XSS attack protection
-- `Referrer-Policy` - Controls referrer information
-
-### 6. DDoS Protection
-- Request rate limiting at nginx level
-- Connection limits per IP
-- Buffer size limits
-- Timeout configurations
-- ngrok's built-in DDoS protection
-
-##  API Endpoints
-
-### GET `/`
-Returns API information and available endpoints.
-
-**Response:**
-```json
-{
-  "message": "AI Model API is running!",
-  "endpoints": {
-    "health": "/health",
-    "predict": "/predict (POST with file upload)"
-  },
-  "note": "API key required for /predict endpoint"
-}
-```
-
-### GET `/health`
-Health check endpoint (no authentication required).
-
-**Response:**
-```json
-{
-  "status": "healthy",
-  "model_loaded": true
-}
-```
-
-### POST `/predict`
-Image classification endpoint.
-
-**Headers:**
-- `X-API-Key`: Your API key (required)
-- `Content-Type`: multipart/form-data
-
-**Body:**
-- `file`: Image file (max 10MB)
-
-**Response:**
-```json
-{
-  "prediction": 0,
-  "probabilities": [0.8234, 0.1766],
-  "confidence": 0.8234
-}
-```
-
-**Error Responses:**
-- `401`: Invalid or missing API key
-- `400`: Invalid file or file type
-- `413`: File too large
-- `429`: Rate limit exceeded
-- `500`: Internal server error
-
-##  Usage in Web Applications
-
-###  Important Security Note
-
-**Never expose your API key in frontend JavaScript!** The key will be visible in:
-- Browser DevTools
-- Page source
-- Network requests
-
-###  Secure Implementation
-
-Create a backend proxy to hide your API key:
+**Do not send `X-API-Key` from the browser.** Proxy through your own backend.
 
 ```javascript
-// backend.js (Your website's backend server)
+// your-backend.js — key stays on the server
 import express from 'express';
 import fetch from 'node-fetch';
 import FormData from 'form-data';
 
-const app = express();
-const AI_API_KEY = process.env.AI_API_KEY;  // Secure!
-const AI_API_URL = 'https://your-ngrok-url.ngrok-free.app';
+const AI_API_KEY = process.env.AI_API_KEY;
+const AI_API_URL = process.env.AI_API_URL;
 
 app.post('/api/predict', upload.single('image'), async (req, res) => {
     const formData = new FormData();
@@ -287,7 +234,7 @@ app.post('/api/predict', upload.single('image'), async (req, res) => {
         body: formData,
         headers: {
             ...formData.getHeaders(),
-            'X-API-Key': AI_API_KEY  // Hidden from users
+            'X-API-Key': AI_API_KEY
         }
     });
 
@@ -296,220 +243,103 @@ app.post('/api/predict', upload.single('image'), async (req, res) => {
 ```
 
 ```javascript
-// frontend.js (Runs in user's browser - Safe)
+// frontend.js — no secrets
 async function predictImage(imageFile) {
     const formData = new FormData();
     formData.append('image', imageFile);
-    
-    // Call YOUR backend, not the AI API directly
-    const response = await fetch('/api/predict', {
-        method: 'POST',
-        body: formData
-        // No API key needed!
-    });
-    
-    return await response.json();
+    const response = await fetch('/api/predict', { method: 'POST', body: formData });
+    return response.json();
 }
 ```
 
-##  Management Commands
+---
+
+## Day-to-day commands
 
 ```bash
-# Start services
 docker-compose up -d
-
-# Stop services
 docker-compose down
-
-# View logs
 docker-compose logs -f
-
-# View specific service logs
 docker-compose logs ai-model-api
 docker-compose logs nginx-proxy
 docker-compose logs ngrok
-
-# Restart services
 docker-compose restart
-
-# Rebuild after code changes
 docker-compose up -d --build
-
-# Check container status
 docker-compose ps
-
-# Access ngrok dashboard
-# Open http://localhost:4040 in browser
 ```
 
-##  Monitoring
+ngrok inspector: [http://localhost:4040](http://localhost:4040)
 
-### ngrok Dashboard
-Access at http://localhost:4040 to view:
-- Active tunnel URL
-- Request history
-- Response times
-- Traffic statistics
+---
 
-### Container Logs
-```bash
-# Follow all logs
-docker-compose logs -f
+## Swap in a new model
 
-# Check for errors
-docker-compose logs | grep -i error
-
-# View last 100 lines
-docker-compose logs --tail 100
-```
-
-##  Troubleshooting
-
-### ngrok authentication failed
-**Issue:** ngrok container shows authentication error
-
-**Solution:**
-1. Get your auth token from https://dashboard.ngrok.com
-2. Update `.env` file with correct `NGROK_AUTHTOKEN`
-3. Restart: `docker-compose restart ngrok`
-
-### API returns 401 Unauthorized
-**Issue:** Invalid or missing API key
-
-**Solution:**
-- Ensure `X-API-Key` header is included in request
-- Verify API key matches the one in `.env` file
-- Check for extra spaces or dashes in the key
-
-### Rate limit exceeded
-**Issue:** Too many requests
-
-**Solution:**
-- Wait 1 minute for rate limit to reset
-- Reduce request frequency
-- Upgrade nginx rate limits in `nginx.conf` if needed
-
-### Model not loaded
-**Issue:** Health check shows `"model_loaded": false`
-
-**Solution:**
-1. Check if model files exist in `models/` directory
-2. View logs: `docker-compose logs ai-model-api`
-3. Rebuild: `docker-compose up -d --build`
-
-### Container keeps restarting
-**Issue:** Container exits immediately
-
-**Solution:**
-```bash
-# Check container logs
-docker-compose logs [service-name]
-
-# Common causes:
-# - Invalid configuration file
-# - Missing environment variables
-# - Port conflicts
-```
-
-##  Updating the Model
-
-1. Export new ONNX model:
 ```bash
 python export_model.py
-```
-
-2. Rebuild containers:
-```bash
 docker-compose down
 docker-compose up -d --build
 ```
 
-##  Scaling
-
-### Increase Rate Limits
-
-Edit `nginx.conf`:
-```nginx
-# Change from 5r/m to 20r/m
-limit_req_zone $binary_remote_addr zone=predict_limit:10m rate=20r/m;
-```
-
-Restart:
-```bash
-docker-compose restart nginx-proxy
-```
-
-### Add More Workers
-
-Edit `server.py`:
-```python
-if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5001, threaded=True, processes=4)
-```
-
-### Permanent ngrok URL
-
-Upgrade to ngrok paid plan ($8/month) for:
-- Custom subdomain
-- Reserved domain
-- No connection limits
-
-##  Production Deployment
-
-### Best Practices
-
-1. **Change default API key** - Generate a strong, unique key
-2. **Set up user authentication** - Add your own user system
-3. **Enable HTTPS only** - Disable HTTP in nginx
-4. **Implement logging** - Add request logging for audit
-5. **Monitor usage** - Track API usage per user
-6. **Set up alerts** - Get notified of errors/downtime
-7. **Regular backups** - Backup model and configuration
-8. **Keep updated** - Regular security updates
-
-### Cloud Deployment
-
-For production, consider deploying to:
-- **AWS ECS/Fargate** - Scalable container hosting
-- **Google Cloud Run** - Serverless containers
-- **Azure Container Instances** - Simple container hosting
-- **Railway/Render** - Easy deployment platforms
-
-##  Model Details
-
-- **Architecture**: EfficientNet-B3
-- **Input Size**: 128x128 RGB images
-- **Output**: Binary classification (2 classes)
-- **Framework**: PyTorch → ONNX
-- **Preprocessing**: 
-  - Resize to 128x128
-  - Normalize: mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
-
-##  Contributing
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Test thoroughly
-5. Submit a pull request
-
-##  License
-
-This project is private. All rights reserved.
-
-##  Support
-
-For issues or questions:
-1. Check the Troubleshooting section
-2. Review container logs: `docker-compose logs`
-3. Open an issue on GitHub
-
-##  Acknowledgments
-
-- Flask - Web framework
-- ONNX Runtime - Optimized inference
-- nginx - Reverse proxy
-- ngrok - Secure tunneling
-- Docker - Containerization
+`export_model.py` reads `models/improved_All_nz_regions_model.pth` and writes the ONNX file the API loads at startup.
 
 ---
+
+## Project layout
+
+```
+ai-hosting/
+├── server.py              # Flask API — auth, validation, inference
+├── model_arc.py           # EfficientNet-B3 + ONNXInference
+├── export_model.py        # PyTorch → ONNX
+├── Dockerfile             # API image
+├── docker-compose.yml     # API + nginx + ngrok
+├── nginx.conf             # Limits, CORS, security headers
+├── ngrok.yml              # HTTPS tunnel onto nginx
+├── requirements.txt
+├── .env.example           # Template only — copy to .env
+├── package.json
+├── test.js                # Smoke test against AI_API_URL
+├── auckland_15_32258_19983.jpg
+└── models/
+    └── improved_All_nz_regions_model.onnx
+```
+
+`.env` is local-only and is not in git.
+
+---
+
+## Troubleshooting
+
+**ngrok auth failed**  
+Put a valid `NGROK_AUTHTOKEN` in `.env`, then `docker-compose restart ngrok`.
+
+**401 on `/predict`**  
+Send `X-API-Key` and make sure it matches `AI_API_KEY` in `.env` (no extra spaces).
+
+**429**  
+Wait for the window to reset. Limits are there on purpose.
+
+**`model_loaded: false`**  
+Confirm `models/improved_All_nz_regions_model.onnx` exists, then `docker-compose logs ai-model-api` and rebuild.
+
+**Container restart loop**
+
+```bash
+docker-compose logs [service-name]
+```
+
+Usual causes: missing env vars, bad nginx config, port 4040 already in use.
+
+---
+
+## Going further
+
+- Raise nginx rates in `nginx.conf` if you are load-testing, then `docker-compose restart nginx-proxy`
+- A reserved ngrok domain needs a paid ngrok plan
+- For a real deploy, drop ngrok and put the same Compose stack behind AWS ECS, Cloud Run, or Azure Container Apps with a proper domain and TLS
+
+---
+
+## License
+
+Private. All rights reserved.

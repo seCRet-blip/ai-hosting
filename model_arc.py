@@ -35,21 +35,34 @@ class EfficientNetClassifier(nn.Module):
         self.eval()
         dummy_input = torch.randn(input_shape)
         
-        torch.onnx.export(
-            self,
-            dummy_input,
-            onnx_path,
-            export_params=True,
-            opset_version=11,
-            do_constant_folding=True,
-            input_names=['input'],
-            output_names=['output'],
-            dynamic_axes={
-                'input': {0: 'batch_size'},
-                'output': {0: 'batch_size'}
-            }
-        )
-        print(f"Model exported to {onnx_path}")
+        # Export with opset 18 to avoid conversion issues
+        with torch.no_grad():
+            torch.onnx.export(
+                self,
+                dummy_input,
+                onnx_path,
+                export_params=True,
+                opset_version=18,  # Use opset 18 to match modern operators
+                do_constant_folding=False,  # Disable constant folding to avoid conversion issues
+                input_names=['input'],
+                output_names=['output'],
+                dynamic_axes=None,
+                verbose=False
+            )
+        
+        print(f"✓ Model successfully exported to {onnx_path}")
+        
+        # Test the exported model
+        try:
+            import onnxruntime as ort
+            # Use basic provider to avoid version conflicts
+            session = ort.InferenceSession(onnx_path, providers=['CPUExecutionProvider'])
+            test_input = dummy_input.numpy()
+            result = session.run(None, {session.get_inputs()[0].name: test_input})
+            print(f"✓ Model validation passed - Output shape: {result[0].shape}")
+        except Exception as e:
+            print(f"⚠ Warning: Model validation failed: {e}")
+            print(f"  Model exported but validation could not complete")
 
 class ONNXInference:
     """ONNX inference class"""

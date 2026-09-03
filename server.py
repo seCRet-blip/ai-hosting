@@ -11,20 +11,31 @@ from torchvision import transforms
 import os
 import hashlib
 from functools import wraps
+import logging
+
+# Configure secure logging (errors logged but not exposed to clients)
+logging.basicConfig(
+    level=logging.WARNING,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler()]
+)
 
 app = Flask(__name__)
-CORS(app)
+# CORS is handled by nginx proxy, disable Flask CORS to prevent duplicate headers
+# CORS(app)
 
-# Rate limiting
+# Rate limiting - strict limits to prevent abuse
 limiter = Limiter(
     app=app,
     key_func=get_remote_address,
-    default_limits=["100 per hour"],
+    default_limits=["30 per hour"],  # Align with nginx limits
     storage_uri="memory://"
 )
 
-# API Key Authentication
-API_KEY = os.environ.get('API_KEY', 'your-secret-api-key-change-this')
+# API Key Authentication with hashing
+RAW_API_KEY = os.environ.get('AI_API_KEY')
+# Hash the API key on startup for secure comparison
+API_KEY_HASH = hashlib.sha256(RAW_API_KEY.encode()).hexdigest()
 
 def require_api_key(f):
     @wraps(f)
@@ -34,17 +45,22 @@ def require_api_key(f):
             return f(*args, **kwargs)
         
         api_key = request.headers.get('X-API-Key')
-        if not api_key or api_key != API_KEY:
+        if not api_key:
+            return jsonify({'error': 'Unauthorized - Invalid or missing API key'}), 401
+        
+        # Hash the provided key and compare with stored hash
+        provided_key_hash = hashlib.sha256(api_key.encode()).hexdigest()
+        if provided_key_hash != API_KEY_HASH:
             return jsonify({'error': 'Unauthorized - Invalid or missing API key'}), 401
         return f(*args, **kwargs)
     return decorated_function
 
 # Initialize the ONNX model
 try:
-    predictor = ONNXInference("models/All_nz_regions_model.onnx")
-    print("Model loaded successfully!")
+    predictor = ONNXInference("models/improved_All_nz_regions_model.onnx")
+    logging.info("Model loaded successfully")
 except Exception as e:
-    print(f"Error loading model: {e}")
+    logging.error(f"Failed to load model: {type(e).__name__}")
     predictor = None
 
 def preprocess_image(image):
@@ -59,7 +75,7 @@ def preprocess_image(image):
     return tensor
 
 @app.route('/', methods=['GET'])
-@limiter.limit("20 per minute")
+@limiter.limit("30 per hour")
 def home():
     return jsonify({
         "message": "AI Model API is running!",
@@ -71,12 +87,12 @@ def home():
     }), 200
 
 @app.route('/health', methods=['GET'])
-@limiter.limit("30 per minute")
+@limiter.limit("60 per hour")  # More generous for monitoring
 def health_check():
     return jsonify({"status": "healthy", "model_loaded": predictor is not None}), 200
 
 @app.route('/predict', methods=['POST'])
-@limiter.limit("10 per minute")
+@limiter.limit("30 per hour")  # 30 predictions per hour
 @require_api_key
 def predict():
     try:
@@ -113,6 +129,7 @@ def predict():
             image = Image.open(io.BytesIO(file_data))  # Reopen after verify
             image = image.convert('RGB')
         except Exception as e:
+            logging.warning(f"Image validation failed: {type(e).__name__}")
             return jsonify({"error": "Invalid or corrupted image file"}), 400
         
         # Validate image dimensions (prevent extremely large images)
@@ -148,7 +165,8 @@ def predict():
         })
         
     except Exception as e:
-        print(f"Prediction error: {e}")
+        # Log error type only, not detailed message to prevent info leakage
+        logging.error(f"Prediction failed: {type(e).__name__}")
         return jsonify({"error": "Prediction failed"}), 500
 
 @app.errorhandler(429)
@@ -164,7 +182,7 @@ def internal_error(e):
     return jsonify({"error": "Internal server error"}), 500
 
 if __name__ == '__main__':
-    print("Starting Flask server on 0.0.0.0:5001")
-    print(f"API Key authentication enabled - Set API_KEY environment variable")
+    logging.info("Starting Flask server on 0.0.0.0:5001")
+    logging.info("API Key authentication enabled")
     # Disable debug mode for production
     app.run(host='0.0.0.0', port=5001, debug=False, threaded=True)

@@ -46,6 +46,8 @@ profile_default/
 ipython_config.py
 .python-version
 .env
+.env.*
+!.env.example
 .venv
 env/
 venv/
@@ -76,15 +78,14 @@ lerna-debug.log*
 *.tgz
 .yarn-integrity
 
-# Environment variables
+# Environment variables — never commit real secrets
 .env
+.env.*
+!.env.example
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
-
-# Docker
-.dockerignore
 
 # IDEs and Editors
 .vscode/
@@ -157,17 +158,23 @@ ngrok.exe
 *.pem
 *.crt
 *.cert
+*.p12
+*.pfx
+id_rsa
+id_ed25519
 secrets/
 credentials/
 .secrets
 
-# Data files (if you don't want to track training data)
+# Training / dataset dumps (keep Node project files)
 data/
 datasets/
 *.csv
-*.json
 *.xml
 *.parquet
+*.json
+!package.json
+!package-lock.json
 
 # Images (uncomment if you don't want to track test images)
 # *.jpg
